@@ -19,7 +19,7 @@ Entry for the make.fun bounty **news-image-20261122** ("Sum up 22 November's wor
 
 ## How it works
 
-- `main.py` — Python 3.13, Pillow only, no network. Draws the newspaper front page procedurally (masthead, lead story with a WANTED poster, six story cards, news ticker) and writes it deterministically to `$MAKEFUN_OUTPUT_DIR/entry.png`, or `/output/entry.png` when the variable is unset. 1024×1024 PNG, identical bytes on every run.
+- `main.py` — Python 3.13, pure standard library only (no Pillow, no third-party imports), no network. Draws the newspaper front page procedurally (masthead, lead story with a WANTED poster, six story cards, news ticker) with a built-in bitmap font and a hand-written PNG encoder, and writes it deterministically to `$MAKEFUN_OUTPUT_DIR/entry.png`, or `/output/entry.png` when the variable is unset. 1024×1024 PNG, identical bytes on every run.
 
 ## License
 

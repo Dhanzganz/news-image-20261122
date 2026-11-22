@@ -1,311 +1,433 @@
 #!/usr/bin/env python3
-"""Entry for make.fun bounty news-image-20261122.
+"""Entry for make.fun bounty news-image-20261122 (round 2).
 
-Draws a one-page newspaper front page summing up the world news of
-Sunday 22 November 2026 and writes it to $MAKEFUN_OUTPUT_DIR/entry.png
-(or /output/entry.png when the variable is unset).
-
-Python 3.13, Pillow only, no network, no randomness, no clock:
-the same bytes on every run.
+Pure Python standard library only: no PIL, no third-party imports.
+Draws a 1024x1024 front page for Sunday 22 November 2026 and writes it
+as a PNG to $MAKEFUN_OUTPUT_DIR/entry.png (or /output/entry.png).
+Deterministic: same bytes on every run. No network, no clock, no randomness.
 """
 
+import math
 import os
+import struct
+import zlib
 
-from PIL import Image, ImageDraw, ImageFont
+W = 1024
+H = 1024
 
-W, H = 1024, 1024
-
-PAPER = (248, 244, 236)
+NAVY = (14, 42, 71)
+RED = (176, 30, 40)
+GOLD = (201, 162, 39)
+PAPER = (251, 248, 241)
 INK = (20, 20, 20)
-NAVY = (20, 33, 61)
-RED = (179, 39, 30)
-BLUE = (29, 78, 137)
-GOLD = (192, 138, 0)
-GREY = (110, 105, 95)
-CARD = (255, 255, 255)
-CARD_LINE = (216, 210, 196)
-LIGHT_BLUE = (214, 230, 242)
-LIGHT_GOLD = (247, 232, 190)
+GREY = (85, 85, 85)
+TAN = (243, 233, 210)
+LIGHT = (220, 232, 242)
+WHITE = (255, 255, 255)
+BROWN = (122, 74, 33)
+GREEN = (34, 120, 60)
 
-FONT_PATHS = [
-    "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-]
+# 5x7 bitmap font. Each glyph is 7 rows of 5 characters ('#' = on).
+FONT = {
+    "A": (".###.", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"),
+    "B": ("####.", "#...#", "#...#", "####.", "#...#", "#...#", "####."),
+    "C": (".####", "#....", "#....", "#....", "#....", "#....", ".####"),
+    "D": ("####.", "#...#", "#...#", "#...#", "#...#", "#...#", "####."),
+    "E": ("#####", "#....", "#....", "####.", "#....", "#....", "#####"),
+    "F": ("#####", "#....", "#....", "####.", "#....", "#....", "#...."),
+    "G": (".####", "#....", "#....", "#.###", "#...#", "#...#", ".###."),
+    "H": ("#...#", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"),
+    "I": (".###.", "..#..", "..#..", "..#..", "..#..", "..#..", ".###."),
+    "J": ("..###", "...#.", "...#.", "...#.", "...#.", "#..#.", ".##.."),
+    "K": ("#...#", "#..#.", "#.#..", "##...", "#.#..", "#..#.", "#...#"),
+    "L": ("#....", "#....", "#....", "#....", "#....", "#....", "#####"),
+    "M": ("#...#", "##.##", "#.#.#", "#.#.#", "#...#", "#...#", "#...#"),
+    "N": ("#...#", "##..#", "##..#", "#.#.#", "#..##", "#..##", "#...#"),
+    "O": (".###.", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."),
+    "P": ("####.", "#...#", "#...#", "####.", "#....", "#....", "#...."),
+    "Q": (".###.", "#...#", "#...#", "#...#", "#.#.#", "#..#.", ".##.#"),
+    "R": ("####.", "#...#", "#...#", "####.", "#.#..", "#..#.", "#...#"),
+    "S": (".####", "#....", "#....", ".###.", "....#", "....#", "####."),
+    "T": ("#####", "..#..", "..#..", "..#..", "..#..", "..#..", "..#.."),
+    "U": ("#...#", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."),
+    "V": ("#...#", "#...#", "#...#", "#...#", "#...#", ".#.#.", "..#.."),
+    "W": ("#...#", "#...#", "#...#", "#.#.#", "#.#.#", "##.##", "#...#"),
+    "X": ("#...#", "#...#", ".#.#.", "..#..", ".#.#.", "#...#", "#...#"),
+    "Y": ("#...#", "#...#", ".#.#.", "..#..", "..#..", "..#..", "..#.."),
+    "Z": ("#####", "....#", "...#.", "..#..", ".#...", "#....", "#####"),
+    "0": (".###.", "#..##", "#.#.#", "##..#", "#...#", "#...#", ".###."),
+    "1": ("..#..", ".##..", "..#..", "..#..", "..#..", "..#..", ".###."),
+    "2": (".###.", "#...#", "....#", "...#.", "..#..", ".#...", "#####"),
+    "3": ("####.", "....#", "....#", ".###.", "....#", "....#", "####."),
+    "4": ("...#.", "..##.", ".#.#.", "#..#.", "#####", "...#.", "...#."),
+    "5": ("#####", "#....", "####.", "....#", "....#", "#...#", ".###."),
+    "6": (".###.", "#....", "#....", "####.", "#...#", "#...#", ".###."),
+    "7": ("#####", "....#", "...#.", "..#..", "..#..", "..#..", "..#.."),
+    "8": (".###.", "#...#", "#...#", ".###.", "#...#", "#...#", ".###."),
+    "9": (".###.", "#...#", "#...#", ".####", "....#", "....#", ".###."),
+    " ": (".....", ".....", ".....", ".....", ".....", ".....", "....."),
+    ".": (".....", ".....", ".....", ".....", ".....", ".....", ".##.."),
+    ",": (".....", ".....", ".....", ".....", ".....", ".##..", ".##.."),
+    ":": (".....", ".##..", ".##..", ".....", ".##..", ".##..", "....."),
+    ";": (".....", ".##..", ".##..", ".....", ".##..", ".##..", ".#..."),
+    "!": ("..#..", "..#..", "..#..", "..#..", "..#..", ".....", "..#.."),
+    "?": (".###.", "#...#", "....#", "...#.", "..#..", ".....", "..#.."),
+    "'": ("..#..", "..#..", ".#...", ".....", ".....", ".....", "....."),
+    '"': (".#.#.", ".#.#.", ".....", ".....", ".....", ".....", "....."),
+    "-": (".....", ".....", ".....", ".###.", ".....", ".....", "....."),
+    "*": (".....", ".#.#.", ".###.", "#####", ".###.", ".#.#.", "....."),
+    "/": ("....#", "....#", "...#.", "..#..", ".#...", "#....", "#...."),
+    "(": ("...#.", "..#..", ".#...", ".#...", ".#...", "..#..", "...#."),
+    ")": (".#...", "..#..", "...#.", "...#.", "...#.", "..#..", ".#..."),
+    "[": (".###.", ".#...", ".#...", ".#...", ".#...", ".#...", ".###."),
+    "]": (".###.", "...#.", "...#.", "...#.", "...#.", "...#.", ".###."),
+    "+": (".....", "..#..", "..#..", "#####", "..#..", "..#..", "....."),
+    "=": (".....", ".....", "#####", ".....", "#####", ".....", "....."),
+    "%": ("##..#", "##.#.", "..#..", ".#...", "#..##", "#..##", "....."),
+    "&": (".##..", "#..#.", "#..#.", ".#...", "#.#.#", "#..#.", ".##.#"),
+    "$": ("..#..", ".####", "#.#..", ".###.", "..#.#", "####.", "..#.."),
+    "#": (".#.#.", ".#.#.", "#####", ".#.#.", "#####", ".#.#.", ".#.#."),
+    "@": (".###.", "#...#", "#.###", "#.#.#", "#.##.", "#....", ".###."),
+    "_": (".....", ".....", ".....", ".....", ".....", ".....", "#####"),
+    "\u2022": (".....", ".....", ".###.", ".###.", ".###.", ".....", "....."),
+}
 
 
-def font(name, size):
-    """Load a DejaVu font by role, falling back to PIL's default font."""
-    wanted = {
-        "serif_bold": "DejaVuSerif-Bold.ttf",
-        "serif": "DejaVuSerif.ttf",
-        "sans_bold": "DejaVuSans-Bold.ttf",
-        "sans": "DejaVuSans.ttf",
-    }[name]
-    for path in FONT_PATHS:
-        if path.endswith(wanted):
-            try:
-                return ImageFont.truetype(path, size)
-            except OSError:
+class Canvas:
+    def __init__(self, w, h, bg):
+        self.w = w
+        self.h = h
+        self.px = bytearray(w * h * 3)
+        self.fill_rect(0, 0, w, h, bg)
+
+    def set(self, x, y, color):
+        if 0 <= x < self.w and 0 <= y < self.h:
+            i = (y * self.w + x) * 3
+            self.px[i] = color[0]
+            self.px[i + 1] = color[1]
+            self.px[i + 2] = color[2]
+
+    def fill_rect(self, x, y, w, h, color):
+        x0 = max(0, x)
+        y0 = max(0, y)
+        x1 = min(self.w, x + w)
+        y1 = min(self.h, y + h)
+        r, g, b = color
+        for yy in range(y0, y1):
+            base = (yy * self.w + x0) * 3
+            for xx in range(x0, x1):
+                i = base + (xx - x0) * 3
+                self.px[i] = r
+                self.px[i + 1] = g
+                self.px[i + 2] = b
+
+    def hline(self, x, y, w, color):
+        self.fill_rect(x, y, w, 1, color)
+
+    def vline(self, x, y, h, color):
+        self.fill_rect(x, y, 1, h, color)
+
+    def rect(self, x, y, w, h, color, t=1):
+        self.fill_rect(x, y, w, t, color)
+        self.fill_rect(x, y + h - t, w, t, color)
+        self.fill_rect(x, y, t, h, color)
+        self.fill_rect(x + w - t, y, t, h, color)
+
+    def line(self, x0, y0, x1, y1, color):
+        dx = abs(x1 - x0)
+        dy = -abs(y1 - y0)
+        sx = 1 if x0 < x1 else -1
+        sy = 1 if y0 < y1 else -1
+        err = dx + dy
+        while True:
+            self.set(x0, y0, color)
+            if x0 == x1 and y0 == y1:
                 break
-    return ImageFont.load_default(size)
+            e2 = 2 * err
+            if e2 >= dy:
+                err += dy
+                x0 += sx
+            if e2 <= dx:
+                err += dx
+                y0 += sy
+
+    def fill_circle(self, cx, cy, r, color):
+        for dy in range(-r, r + 1):
+            dx = int(math.sqrt(max(0, r * r - dy * dy)))
+            self.fill_rect(cx - dx, cy + dy, 2 * dx + 1, 1, color)
+
+    def circle(self, cx, cy, r, color, t=2):
+        for rr in range(r - t + 1, r + 1):
+            for dy in range(-rr, rr + 1):
+                dx = int(math.sqrt(max(0, rr * rr - dy * dy)))
+                self.set(cx - dx, cy + dy, color)
+                self.set(cx + dx, cy + dy, color)
+
+    def fill_ellipse(self, cx, cy, rx, ry, color):
+        for dy in range(-ry, ry + 1):
+            dx = int(rx * math.sqrt(max(0.0, 1.0 - (dy * dy) / float(ry * ry))))
+            self.fill_rect(cx - dx, cy + dy, 2 * dx + 1, 1, color)
+
+    def fill_triangle(self, p0, p1, p2, color):
+        (x0, y0), (x1, y1), (x2, y2) = p0, p1, p2
+        ymin = min(y0, y1, y2)
+        ymax = max(y0, y1, y2)
+        for y in range(ymin, ymax + 1):
+            xs = []
+            for (ax, ay), (bx, by) in ((p0, p1), (p1, p2), (p2, p0)):
+                if ay == by:
+                    continue
+                if (y >= min(ay, by)) and (y < max(ay, by) or y == ymax):
+                    t = (y - ay) / float(by - ay)
+                    xs.append(ax + t * (bx - ax))
+            if len(xs) >= 2:
+                xa = int(min(xs))
+                xb = int(max(xs))
+                self.fill_rect(xa, y, xb - xa + 1, 1, color)
 
 
-def wrap(draw, text, fnt, max_width):
-    """Greedy word wrap; returns a list of lines fitting max_width."""
+def text_width(text, scale):
+    return len(text) * 6 * scale - scale
+
+
+def draw_char(cv, ch, x, y, scale, color):
+    glyph = FONT.get(ch, FONT[" "])
+    for row in range(7):
+        bits = glyph[row]
+        for col in range(5):
+            if bits[col] == "#":
+                cv.fill_rect(x + col * scale, y + row * scale, scale, scale, color)
+
+
+def draw_text(cv, text, x, y, scale, color):
+    text = text.upper().replace("\u2014", "-").replace("\u2019", "'")
+    cx = x
+    for ch in text:
+        draw_char(cv, ch, cx, y, scale, color)
+        cx += 6 * scale
+    return cx
+
+
+def draw_text_centered(cv, text, cx, y, scale, color):
+    text = text.upper().replace("\u2014", "-").replace("\u2019", "'")
+    w = text_width(text, scale)
+    draw_text(cv, text, cx - w // 2, y, scale, color)
+
+
+def wrap_text(text, max_width, scale):
+    text = text.upper().replace("\u2014", "-").replace("\u2019", "'")
+    char_w = 6 * scale
+    max_chars = max(1, max_width // char_w)
     lines = []
     for paragraph in text.split("\n"):
-        words = paragraph.split()
-        if not words:
-            lines.append("")
-            continue
-        cur = words[0]
-        for word in words[1:]:
-            trial = cur + " " + word
-            if draw.textlength(trial, font=fnt) <= max_width:
+        words = paragraph.split(" ")
+        cur = ""
+        for word in words:
+            trial = (cur + " " + word).strip() if cur else word
+            if len(trial) <= max_chars:
                 cur = trial
             else:
-                lines.append(cur)
+                if cur:
+                    lines.append(cur)
+                while len(word) > max_chars:
+                    lines.append(word[:max_chars])
+                    word = word[max_chars:]
                 cur = word
-        lines.append(cur)
+        if cur:
+            lines.append(cur)
     return lines
 
 
-def text_block(draw, x, y, lines, fnt, fill, leading):
-    """Draw lines of text, return the y below the last line."""
-    for line in lines:
-        draw.text((x, y), line, font=fnt, fill=fill)
-        y += leading
-    return y
+def draw_wrapped(cv, text, x, y, max_width, scale, color, leading=3):
+    lines = wrap_text(text, max_width, scale)
+    for i, line in enumerate(lines):
+        draw_text(cv, line, x, y + i * (7 * scale + leading), scale, color)
+    return len(lines)
 
 
-def draw_poster(draw, x0, y0, x1, y1):
-    """A 'WANTED' poster with a silhouette and a CAPTURED stamp."""
-    draw.rectangle([x0, y0, x1, y1], fill=(255, 253, 247), outline=INK, width=3)
-    draw.rectangle([x0 + 8, y0 + 8, x1 - 8, y1 - 8], outline=GREY, width=1)
-    f_small = font("sans_bold", 22)
-    label = "WANTED"
-    tw = draw.textlength(label, font=f_small)
-    draw.text(((x0 + x1 - tw) / 2, y0 + 16), label, font=f_small, fill=INK)
-    # Silhouette: head + shoulders.
-    cx = (x0 + x1) // 2
-    cy = y0 + 108
-    draw.ellipse([cx - 42, cy - 42, cx + 42, cy + 42], fill=NAVY)
-    draw.pieslice([cx - 78, cy + 52, cx + 78, cy + 190], 180, 360, fill=NAVY)
-    draw.rectangle([x0 + 14, y0 + 232, x1 - 14, y0 + 236], fill=GREY)
-    # CAPTURED stamp, rotated slightly, kept inside the poster frame.
-    stamp = Image.new("RGBA", (240, 56), (0, 0, 0, 0))
-    sd = ImageDraw.Draw(stamp)
-    sf = font("sans_bold", 30)
-    sd.text((8, 9), "CAPTURED", font=sf, fill=RED + (255,))
-    sd.rectangle([2, 2, 237, 53], outline=RED + (255,), width=4)
-    stamp = stamp.rotate(-10, expand=True, resample=Image.BICUBIC)
-    draw._image.paste(stamp, (cx - 120, y0 + 232), stamp)
+# ---- tiny icons, drawn in a 64x64 box at (ox, oy) ----
+
+def icon_laptop(cv, ox, oy):
+    cv.fill_triangle((ox + 32, oy + 4), (ox + 20, oy + 24), (ox + 44, oy + 24), RED)
+    cv.fill_rect(ox + 30, oy + 11, 4, 7, WHITE)
+    cv.fill_rect(ox + 30, oy + 20, 4, 3, WHITE)
+    cv.rect(ox + 10, oy + 28, 44, 20, NAVY, 2)
+    cv.fill_rect(ox + 6, oy + 50, 52, 4, NAVY)
 
 
-def draw_laptop(draw, x, y, s):
-    """Monitor with a warning triangle: the FBI database hack."""
-    draw.rectangle([x, y, x + s, y + int(s * 0.62)], fill=LIGHT_BLUE,
-                   outline=NAVY, width=3)
-    draw.rectangle([x + int(s * 0.36), y + int(s * 0.62), x + int(s * 0.64),
-                    y + int(s * 0.72)], fill=NAVY)
-    draw.rectangle([x + int(s * 0.22), y + int(s * 0.72), x + int(s * 0.78),
-                    y + int(s * 0.78)], fill=NAVY)
-    cx, cy = x + s // 2, y + int(s * 0.31)
-    draw.polygon([(cx, cy - 16), (cx + 17, cy + 12), (cx - 17, cy + 12)],
-                 fill=GOLD, outline=INK)
-    draw.text((cx - 2, cy - 8), "!", font=font("sans_bold", 20), fill=INK)
+def icon_ship(cv, ox, oy):
+    cv.fill_rect(ox + 30, oy + 10, 3, 30, NAVY)
+    cv.fill_triangle((ox + 33, oy + 10), (ox + 33, oy + 20), (ox + 47, oy + 15), RED)
+    cv.fill_triangle((ox + 8, oy + 40), (ox + 56, oy + 40), (ox + 48, oy + 54), NAVY)
+    cv.fill_triangle((ox + 8, oy + 40), (ox + 56, oy + 40), (ox + 16, oy + 54), NAVY)
+    cv.hline(ox + 4, oy + 58, 56, NAVY)
+    cv.hline(ox + 10, oy + 61, 44, NAVY)
 
 
-def draw_ship(draw, x, y, s):
-    """Ship hull on waves with a small blast star above."""
-    draw.polygon([(x, y + int(s * 0.55)), (x + s, y + int(s * 0.55)),
-                  (x + int(s * 0.82), y + int(s * 0.82)),
-                  (x + int(s * 0.18), y + int(s * 0.82))],
-                 fill=NAVY)
-    draw.rectangle([x + int(s * 0.3), y + int(s * 0.28), x + int(s * 0.42),
-                    y + int(s * 0.55)], fill=NAVY)
-    draw.rectangle([x + int(s * 0.55), y + int(s * 0.18), x + int(s * 0.63),
-                    y + int(s * 0.55)], fill=NAVY)
-    for i, wy in enumerate((int(s * 0.88), int(s * 0.97))):
-        for k in range(4):
-            wx = x + k * int(s * 0.26) + (i * 12)
-            draw.arc([wx, y + wy, wx + 22, y + wy + 12], 180, 360,
-                     fill=BLUE, width=3)
-    # Blast star.
-    bx, by = x + int(s * 0.78), y + 6
-    for ang in range(0, 360, 45):
-        import math
-        r = 16 if ang % 90 == 0 else 8
-        dx = int(r * math.cos(math.radians(ang)))
-        dy = int(r * math.sin(math.radians(ang)))
-        draw.line([bx, by, bx + dx, by + dy], fill=RED, width=3)
-    draw.ellipse([bx - 4, by - 4, bx + 4, by + 4], fill=RED)
+def icon_globe(cv, ox, oy):
+    cv.fill_circle(ox + 32, oy + 32, 22, LIGHT)
+    cv.circle(ox + 32, oy + 32, 22, NAVY, 2)
+    cv.fill_ellipse(ox + 32, oy + 32, 8, 22, LIGHT)
+    cv.circle(ox + 32, oy + 32, 22, NAVY, 1)
+    for dy in (-11, 0, 11):
+        cv.hline(ox + 14, oy + 32 + dy, 36, NAVY)
+    cv.line(ox + 24, oy + 12, ox + 40, oy + 52, NAVY)
 
 
-def draw_globe(draw, x, y, s):
-    """Globe with a small flame: COP31 climate deadlock."""
-    cx, cy, r = x + s // 2, y + s // 2 - 4, s // 2 - 4
-    draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=LIGHT_BLUE,
-                 outline=BLUE, width=3)
-    draw.ellipse([cx - r // 2, cy - r, cx + r // 2, cy + r], outline=BLUE,
-                 width=2)
-    draw.line([cx - r, cy, cx + r, cy], fill=BLUE, width=2)
-    draw.arc([cx - r, cy - r // 2, cx + r, cy + r // 2], 0, 180, fill=BLUE,
-             width=2)
-    # Flame.
-    fx, fy = x + s - 16, y + s - 14
-    draw.polygon([(fx, fy - 18), (fx + 10, fy), (fx + 4, fy),
-                  (fx, fy + 6), (fx - 4, fy), (fx - 10, fy)],
-                 fill=RED)
+def icon_aid(cv, ox, oy):
+    cv.fill_rect(ox + 10, oy + 12, 44, 8, NAVY)
+    cv.rect(ox + 12, oy + 20, 40, 34, NAVY, 2)
+    cv.fill_rect(ox + 28, oy + 26, 8, 22, RED)
+    cv.fill_rect(ox + 19, oy + 33, 26, 8, RED)
 
 
-def draw_aidbox(draw, x, y, s):
-    """Open aid box with a cross on it."""
-    draw.polygon([(x + 6, y + int(s * 0.3)), (x + int(s * 0.5), y + 4),
-                  (x + s - 6, y + int(s * 0.3)), (x + s - 6, y + s - 6),
-                  (x + 6, y + s - 6)], fill=(232, 214, 178),
-                 outline=INK, width=3)
-    draw.rectangle([x + int(s * 0.44), y + int(s * 0.42), x + int(s * 0.56),
-                    y + int(s * 0.72)], fill=RED)
-    draw.rectangle([x + int(s * 0.34), y + int(s * 0.52), x + int(s * 0.66),
-                    y + int(s * 0.62)], fill=RED)
+def icon_ballot(cv, ox, oy):
+    cv.fill_rect(ox + 26, oy + 6, 14, 16, WHITE)
+    cv.rect(ox + 26, oy + 6, 14, 16, NAVY, 1)
+    cv.line(ox + 28, oy + 14, ox + 31, oy + 18, GREEN)
+    cv.line(ox + 31, oy + 18, ox + 38, oy + 9, GREEN)
+    cv.fill_rect(ox + 20, oy + 22, 24, 4, NAVY)
+    cv.rect(ox + 12, oy + 26, 40, 26, NAVY, 2)
 
 
-def draw_ballot(draw, x, y, s):
-    """Ballot box with a check mark."""
-    draw.rectangle([x + 4, y + int(s * 0.34), x + s - 4, y + s - 4],
-                   fill=LIGHT_BLUE, outline=NAVY, width=3)
-    draw.rectangle([x + int(s * 0.36), y + int(s * 0.3), x + int(s * 0.64),
-                    y + int(s * 0.42)], fill=NAVY)
-    draw.line([x + int(s * 0.22), y + int(s * 0.62), x + int(s * 0.42),
-               y + int(s * 0.8)], fill=RED, width=5)
-    draw.line([x + int(s * 0.42), y + int(s * 0.8), x + int(s * 0.82),
-               y + int(s * 0.3)], fill=RED, width=5)
+def icon_rugby(cv, ox, oy):
+    cv.fill_ellipse(ox + 32, oy + 32, 24, 15, BROWN)
+    cv.line(ox + 12, oy + 32, ox + 52, oy + 32, WHITE)
+    for dx in (-8, 0, 8):
+        cv.vline(ox + 32 + dx, oy + 27, 10, WHITE)
 
 
-def draw_rugby(draw, x, y, s):
-    """Rugby ball with a seam."""
-    import math
-    cx, cy = x + s // 2, y + s // 2
-    rx, ry = s // 2 - 4, int(s * 0.32)
-    draw.ellipse([cx - rx, cy - ry, cx + rx, cy + ry], fill=(150, 84, 32),
-                 outline=INK, width=3)
-    draw.line([cx - rx + 10, cy, cx + rx - 10, cy], fill=INK, width=2)
-    for t in (-0.55, -0.18, 0.18, 0.55):
-        px = cx + int(rx * t)
-        half = int(ry * math.sqrt(max(0.0, 1 - t * t)) * 0.55)
-        draw.line([px, cy - half, px, cy + half], fill=INK, width=2)
+ICONS = (icon_laptop, icon_ship, icon_globe, icon_aid, icon_ballot, icon_rugby)
+
+CARDS = (
+    ("FBI PROBES HACK OF ITS CRIME DATABASE",
+     "The bureau confirms an apparent intrusion into the NCIC, the database shared by federal and local police."),
+    ("SHIP ATTACKED IN GULF OF FINLAND",
+     "A Russia-bound merchant vessel is hit by a drone strike; Helsinki warns the Ukraine war is spilling over."),
+    ("COP31 DEADLOCK OVER FOSSIL FUELS",
+     "Nearly 200 nations stall on a new climate deal as the fight over fossil fuels blocks agreement."),
+    ("FOUR NATIONS URGE GAZA AID ACCESS",
+     "Australia, Canada, Italy and the UK call on Israel to let aid reach flooded Gaza without restriction."),
+    ("EISENKOT TAPPED TO FORM GOVERNMENT",
+     "Israel's president asks ex-army chief Gadi Eisenkot to form a cabinet, bypassing Netanyahu."),
+    ("FRANCE REACH RUGBY FINAL",
+     "France beat Argentina in Paris to book a Nations Championship final against South Africa."),
+)
 
 
-CARDS = [
-    ("FBI PROBES HACK OF ITS\nCRIME DATABASE",
-     "The bureau confirms an apparent intrusion into the NCIC, the database shared by federal and local police.",
-     draw_laptop),
-    ("SHIP ATTACKED IN\nGULF OF FINLAND",
-     "A Russia-bound merchant vessel is hit by a drone strike; Helsinki warns the Ukraine war is spilling over.",
-     draw_ship),
-    ("COP31 DEADLOCK OVER\nFOSSIL FUELS",
-     "Nearly 200 nations stall on a new climate deal as the fight over fossil fuels blocks agreement.",
-     draw_globe),
-    ("FOUR NATIONS URGE\nGAZA AID ACCESS",
-     "Australia, Canada, Italy and the UK call on Israel to let aid reach flooded Gaza without restriction.",
-     draw_aidbox),
-    ("EISENKOT TAPPED TO\nFORM GOVERNMENT",
-     "Israel's president asks ex-army chief Gadi Eisenkot to form a cabinet, bypassing Netanyahu.",
-     draw_ballot),
-    ("FRANCE REACH\nRUGBY FINAL",
-     "France beat Argentina in Paris to book a Nations Championship final against South Africa.",
-     draw_rugby),
-]
+def png_bytes(cv):
+    raw = bytearray()
+    for y in range(cv.h):
+        raw.append(0)
+        start = y * cv.w * 3
+        raw += cv.px[start:start + cv.w * 3]
+    comp = zlib.compress(bytes(raw), 9)
 
+    def chunk(tag, data):
+        out = struct.pack(">I", len(data)) + tag + data
+        out += struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+        return out
 
-def draw_card(draw, x, y, w, h, headline, summary, icon_fn):
-    draw.rectangle([x, y, x + w, y + h], fill=CARD, outline=CARD_LINE,
-                   width=2)
-    icon_fn(draw, x + 14, y + 12, 62)
-    f_head = font("sans_bold", 21)
-    f_sum = font("sans", 16)
-    hx = x + 88
-    head_lines = wrap(draw, headline.replace("\n", " "), f_head, w - 102)
-    yy = text_block(draw, hx, y + 12, head_lines, f_head, INK, 25)
-    sum_lines = wrap(draw, summary, f_sum, w - 28)
-    text_block(draw, x + 14, yy + 6, sum_lines, f_sum, (58, 56, 50), 20)
+    ihdr = struct.pack(">IIBBBBB", cv.w, cv.h, 8, 2, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", ihdr)
+        + chunk(b"IDAT", comp)
+        + chunk(b"IEND", b"")
+    )
 
 
 def build():
-    img = Image.new("RGB", (W, H), PAPER)
-    draw = ImageDraw.Draw(img)
+    cv = Canvas(W, H, PAPER)
 
-    # Masthead.
-    draw.rectangle([0, 0, W, 92], fill=NAVY)
-    f_mast = font("serif_bold", 52)
-    title = "THE WORLD IN ONE PAGE"
-    tw = draw.textlength(title, font=f_mast)
-    draw.text(((W - tw) / 2, 16), title, font=f_mast, fill=(255, 255, 255))
-    draw.rectangle([0, 92, W, 138], fill=RED)
-    f_date = font("sans_bold", 32)
-    date = "SUNDAY, 22 NOVEMBER 2026"
-    tw = draw.textlength(date, font=f_date)
-    draw.text(((W - tw) / 2, 100), date, font=f_date, fill=(255, 255, 255))
+    # Masthead
+    cv.fill_rect(0, 0, W, 92, NAVY)
+    draw_text_centered(cv, "THE WORLD IN ONE PAGE", W // 2, 28, 5, WHITE)
+    cv.fill_rect(0, 92, W, 4, GOLD)
 
-    # Lead story.
-    f_kick = font("sans_bold", 19)
-    draw.text((28, 156), "LEAD STORY  —  MEXICO", font=f_kick, fill=RED)
-    f_lead = font("serif_bold", 44)
-    lead_lines = ["MEXICO CAPTURES", "\u2018EL CHAPO ISIDRO\u2019"]
-    yy = text_block(draw, 28, 186, lead_lines, f_lead, INK, 52)
-    f_lead_sum = font("sans", 20)
-    lead_sum = ("Mexican troops storm a Sinaloa hideout in a shoot-out and "
-                "arrest Fausto Isidro Meza Flores \u2014 a fugitive on the "
-                "FBI\u2019s 10 most wanted list.")
-    sum_lines = wrap(draw, lead_sum, f_lead_sum, 600)
-    text_block(draw, 28, yy + 10, sum_lines, f_lead_sum, (58, 56, 50), 27)
-    draw.rectangle([28, 448, 628, 452], fill=CARD_LINE)
-    f_cap = font("sans_bold", 17)
-    draw.text((28, 460), "ARRESTED AFTER A GUNFIGHT AT A REMOTE HIDE-OUT",
-              font=f_cap, fill=GREY)
-    draw_poster(draw, 660, 152, 996, 470)
+    # Date strip
+    cv.fill_rect(0, 96, W, 36, RED)
+    draw_text_centered(cv, "SUNDAY, 22 NOVEMBER 2026", W // 2, 103, 3, WHITE)
 
-    # Section label + card grid.
-    draw.rectangle([28, 496, 996, 498], fill=INK)
-    f_sec = font("sans_bold", 20)
-    draw.text((28, 508), "MORE FROM THE DAY", font=f_sec, fill=INK)
-    card_w, card_h = 312, 196
-    xs = [28, 356, 684]
-    ys = [544, 756]
-    for i, (headline, summary, icon_fn) in enumerate(CARDS):
-        draw_card(draw, xs[i % 3], ys[i // 3], card_w, card_h,
-                  headline, summary, icon_fn)
+    # ---- Lead story, left column ----
+    draw_text(cv, "BREAKING - MEXICO", 24, 150, 2, RED)
+    draw_text(cv, "MEXICO CAPTURES", 24, 180, 4, NAVY)
+    draw_text(cv, "'EL CHAPO ISIDRO'", 24, 216, 4, NAVY)
+    cv.fill_rect(24, 254, 576, 3, GOLD)
+    draw_wrapped(
+        cv,
+        "Mexican troops storm a Sinaloa hideout in a shoot-out and arrest "
+        "Fausto Isidro Meza Flores - a fugitive on the FBI's 10 most wanted list.",
+        24, 272, 560, 2, INK, leading=3,
+    )
+    # Fact box (words taken from the lead summary above)
+    cv.rect(24, 372, 576, 128, NAVY, 2)
+    cv.fill_rect(24, 372, 576, 4, NAVY)
+    draw_text(cv, "THE CAPTURE", 40, 392, 2, NAVY)
+    facts = (
+        "MEXICAN TROOPS STORMED A SINALOA HIDEOUT",
+        "ARRESTED IN A SHOOT-OUT",
+        "ON THE FBI'S 10 MOST WANTED LIST",
+    )
+    for i, fact in enumerate(facts):
+        y = 420 + i * 24
+        cv.fill_circle(48, y + 6, 4, RED)
+        draw_text(cv, fact, 62, y, 2, INK)
 
-    # Ticker strip (shrink the font until the line fits the width).
-    draw.rectangle([0, 964, W, 996], fill=NAVY)
-    ticker = ("ALSO:  6.7 quake shakes Peru\u2019s Andes, no casualties  •  "
-              "4.1 quake hits Myanmar  •  TikTok launches deepfake detector")
-    tick_size = 16
-    while tick_size > 10:
-        f_tick = font("sans", tick_size)
-        if draw.textlength(ticker, font=f_tick) <= 1000:
-            break
-        tick_size -= 1
-    tw = draw.textlength(ticker, font=f_tick)
-    draw.text(((W - tw) / 2, 974), ticker, font=f_tick, fill=(255, 255, 255))
+    # ---- WANTED poster, right column ----
+    cv.fill_rect(624, 148, 376, 364, TAN)
+    cv.rect(624, 148, 376, 364, NAVY, 3)
+    draw_text_centered(cv, "WANTED", 812, 164, 5, NAVY)
+    cv.fill_circle(812, 262, 46, NAVY)
+    cv.fill_ellipse(812, 372, 100, 44, NAVY)
+    cv.rect(700, 424, 224, 44, RED, 3)
+    draw_text_centered(cv, "CAPTURED", 812, 436, 3, RED)
+    draw_text_centered(cv, "FBI 10 MOST WANTED", 812, 480, 2, NAVY)
 
-    # Footer.
-    f_foot = font("sans", 14)
-    foot = "Compiled from wire reports  •  22 NOVEMBER 2026"
-    tw = draw.textlength(foot, font=f_foot)
-    draw.text(((W - tw) / 2, 1004), foot, font=f_foot, fill=GREY)
+    # ---- More from the day ----
+    draw_text(cv, "MORE FROM THE DAY", 24, 536, 3, NAVY)
+    cv.fill_rect(24, 570, 976, 3, GOLD)
 
-    return img
+    for i, (headline, summary) in enumerate(CARDS):
+        col = i % 2
+        row = i // 2
+        x = 24 + col * 496
+        y = 580 + row * 120
+        cv.fill_rect(x, y, 480, 116, WHITE)
+        cv.rect(x, y, 480, 116, NAVY, 1)
+        cv.fill_rect(x + 10, y + 10, 64, 64, LIGHT)
+        cv.rect(x + 10, y + 10, 64, 64, NAVY, 1)
+        ICONS[i](cv, x + 10, y + 10)
+        tx = x + 88
+        tw = 480 - 88 - 12
+        head_lines = wrap_text(headline, tw, 2)
+        for j, line in enumerate(head_lines[:2]):
+            draw_text(cv, line, tx, y + 8 + j * 17, 2, NAVY)
+        sy = y + 8 + 2 * 17 + 4
+        draw_wrapped(cv, summary, tx, sy, tw, 2, INK, leading=3)
+
+    # ---- Ticker ----
+    cv.fill_rect(0, 944, W, 48, RED)
+    draw_text(
+        cv,
+        "ALSO: 6.7 QUAKE SHAKES PERU'S ANDES, NO CASUALTIES \u2022 4.1 QUAKE HITS MYANMAR",
+        12, 950, 2, WHITE,
+    )
+    draw_text(cv, "TIKTOK LAUNCHES DEEPFAKE DETECTOR", 12, 970, 2, WHITE)
+
+    # ---- Footer ----
+    draw_text_centered(
+        cv, "COMPILED FROM WIRE REPORTS - 22 NOVEMBER 2026", W // 2, 1002, 2, GREY
+    )
+    return cv
 
 
 def main():
     out_dir = os.environ.get("MAKEFUN_OUTPUT_DIR", "/output")
     os.makedirs(out_dir, exist_ok=True)
-    img = build()
-    img.save(os.path.join(out_dir, "entry.png"), format="PNG", optimize=True)
+    data = png_bytes(build())
+    with open(os.path.join(out_dir, "entry.png"), "wb") as fh:
+        fh.write(data)
 
 
 if __name__ == "__main__":
